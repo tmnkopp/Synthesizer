@@ -4,13 +4,12 @@ import pandas as pd
 import pymysql
 import pymongo
 import sqlalchemy
-from sqlalchemy import create_engine
-
-from flask import Flask, request, render_template, jsonify, make_response, session
-
-import os
-
+from sqlalchemy import create_engine 
+from flask import Flask, request, render_template, jsonify, make_response, session 
+import os 
 from http import cookies
+from uuid import uuid4
+
 # Heroku check
 is_heroku = False
 if 'IS_HEROKU' in os.environ:
@@ -39,43 +38,57 @@ engine = create_engine(f"mysql://{remote_db_user}:{remote_db_pwd}@{remote_db_end
 def home():  
     user= ''
     if user in session:
-        user = session['user']
+        user = session['sesuser']
     return user
  
-@app.route("/cookies")
-def cookies():  
-    cookie = request.cookies['user']
-    session['user'] = 'cookie'
+@app.route("/get_cookies")
+def get_cookies():  
+    cookie='' 
+    #resp.set_cookie('uid', '', expires=0) 
+    if 'uid' not in request.cookies:  
+        #resp.set_cookie('user', str(uuid4())) 
+        cookie=str(uuid4())
+        resp = make_response(render_template('index.html', cook=cookie))
+        resp.set_cookie('uid', cookie)
+        
+    else:
+        cookie = request.cookies['uid'] 
+        resp = make_response(render_template('index.html', cook=cookie)) 
+    # d={ 'session': session['sesuser'], 'cookie': cookie  } 
+    return resp
+
+@app.route("/set_cookies/<string:cookie>")
+def set_cookies(cookie):   
     resp = make_response(render_template('index.html', cookie=cookie))
-    resp.set_cookie('user', 'tacocat') 
+    resp.set_cookie('user', cookie) 
+    cookie = request.cookies['user']
+    session['user'] = cookie
     return resp 
+ 
+@app.route("/api/services")
+def list_services():
+
+    conn = engine.connect()
+    sql = '''
+    SELECT user_name, GROUP_CONCAT( ups.Service_Id ) sid
+    FROM user_profile up
+    LEFT JOIN user_profile_services ups ON up.User_Id = ups.User_Id 
+    GROUP BY user_name
+    LIMIT 10    '''
+    df = pd.read_sql(sql, con=conn)
+    _json = df.to_json(orient='records')
+    conn.close()
+    return jsonify(_json)
 
 @app.route("/api/lookup")
 def mongodata():
-    client = pymongo.MongoClient(mongoConn)
-
+    client = pymongo.MongoClient(mongoConn) 
     db = client.shows_db
     collection = db.items
     results = collection.find({}, {'_id': False})
     coll_df = pd.DataFrame(results)
     coll_json = coll_df.to_json(orient='records')
     return coll_json
-
-@app.route("/api/services")
-def list_services():
-    conn = engine.connect()
-    query = '''
-        SELECT * 
-        FROM
-            streamingservices
-        '''
-    df = pd.read_sql(query, con=conn)
-    _json = df.to_json(orient='records')
-
-    conn.close()
-    return _json
-
-
 # run the app in debug mode
 if __name__ == "__main__":
     app.secret_key = os.urandom(24)
