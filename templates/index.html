@@ -1,1 +1,17 @@
-{{ cook }}
+
+<a href="/get_cookies">get_cookies</a> | <a href="/">home</a>   | <a href="/test">test</a> 
+<br>
+{% if index_model['user']['uid'] != '' %}
+    user cookie: {{  index_model['user']['uid'] }}   
+{% endif %}
+<br>
+{% if index_model['ses'] != '' %}
+    sess: {{   index_model['ses'] }}   
+{% endif %}
+<br>
+log {{   index_model['log'] }}   
+<br>
+{% if index_model['sid'] != '' %}
+    sid: {{   index_model['sid'] }}   
+{% endif %}
+<br>

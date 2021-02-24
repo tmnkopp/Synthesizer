@@ -5,80 +5,118 @@ import pymysql
 import pymongo
 import sqlalchemy
 from sqlalchemy import create_engine 
-from flask import Flask, request, render_template, jsonify, make_response, session 
+from flask import Flask, request, render_template, jsonify, make_response, session  
+from flask_session import Session
+from flask_cors import CORS 
 import os 
 from http import cookies
 from uuid import uuid4
-
-# Heroku check
-is_heroku = False
-if 'IS_HEROKU' in os.environ:
-    is_heroku = True
+from rb_app_functions import get_session, get_cookie
+from config import mongoConn, remote_db_endpoint, remote_db_port, remote_db_name, remote_db_user, remote_db_pwd
 
 # instantiate Flask
 app = Flask(__name__)
+app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_TYPE"] = "filesystem"
 
-if is_heroku == True:
-    # if IS_HEROKU is found in the environment variables, then use the rest
-    # NOTE: you still need to set up the IS_HEROKU environment variable on Heroku (it is not there by default)
-    mongoConn = os.environ.get('mongoConn')
-    remote_db_endpoint = os.environ.get('remote_db_endpoint')
-    remote_db_port = os.environ.get('remote_db_port')
-    remote_db_name = os.environ.get('remote_db_name')
-    remote_db_user = os.environ.get('remote_db_user')
-    remote_db_pwd = os.environ.get('remote_db_pwd')
-else:
-    # use the config.py file if IS_HEROKU is not detected
-    from config import mongoConn, remote_db_endpoint, remote_db_port, remote_db_name, remote_db_user, remote_db_pwd
-
+Session(app)
+ 
 pymysql.install_as_MySQLdb() 
 engine = create_engine(f"mysql://{remote_db_user}:{remote_db_pwd}@{remote_db_endpoint}:{remote_db_port}/{remote_db_name}")
 
+index_model = {
+    'user':{  'uid':'' },
+    'ses':'',
+    'log':'',
+    'sid':''
+} 
+
 @app.route("/")
 def home():  
-    user= ''
-    if user in session:
-        user = session['sesuser']
-    return user
- 
-@app.route("/get_cookies")
-def get_cookies():  
-    cookie='' 
-    #resp.set_cookie('uid', '', expires=0) 
-    if 'uid' not in request.cookies:  
-        #resp.set_cookie('user', str(uuid4())) 
-        cookie=str(uuid4())
-        resp = make_response(render_template('index.html', cook=cookie))
-        resp.set_cookie('uid', cookie)
-        
-    else:
-        cookie = request.cookies['uid'] 
-        resp = make_response(render_template('index.html', cook=cookie)) 
-    # d={ 'session': session['sesuser'], 'cookie': cookie  } 
+    if 'uid' in request.cookies: 
+        index_model['user']['uid'] = request.cookies['uid']   
+    resp = make_response(render_template('index.html', index_model=index_model))
     return resp
 
-@app.route("/set_cookies/<string:cookie>")
-def set_cookies(cookie):   
-    resp = make_response(render_template('index.html', cookie=cookie))
-    resp.set_cookie('user', cookie) 
-    cookie = request.cookies['user']
-    session['user'] = cookie
-    return resp 
+@app.route("/test")
+def test(): 
+    index_model['user']['uid'] = ''
+    if 'uid' in request.cookies: 
+        index_model['user']['uid'] = request.cookies['uid']       
+    if 'query_string' in session: 
+        
+        index_model['ses'] = f'ses: {session["query_string"]}'
+        index_model['log']  =   f'query_string in session'
+        index_model['sid']  = f'{session.sid}'
+    else: 
+        session['query_string'] = request.args.get('aaa')
+        index_model['ses'] = session['query_string']
+        index_model['log']  = f'query_string not in session '
+        index_model['sid']  = f'{session.sid}'
+    resp = make_response(render_template('index.html', index_model=index_model))    
+    return resp
+ 
+@app.route("/get_cookies")
+def get_cookies(): 
+
+    cookie='' 
+    #resp.set_cookie('uid', '', expires=0) 
+    if 'uid' not in request.cookies:   
+        cookie=str(uuid4())
+        index_model['user']['uid']=cookie
+        resp = make_response(render_template('index.html', index_model=index_model))
+        resp.set_cookie('uid', cookie ) 
+    else:
+        cookie = request.cookies['uid'] 
+        index_model['user']['uid']=cookie
+        resp = make_response(render_template('index.html', index_model=index_model)) 
+ 
+    return resp
+
  
 @app.route("/api/services")
 def list_services():
 
     conn = engine.connect()
     sql = '''
-    SELECT user_name, GROUP_CONCAT( ups.Service_Id ) sid
-    FROM user_profile up
-    LEFT JOIN user_profile_services ups ON up.User_Id = ups.User_Id 
-    GROUP BY user_name
-    LIMIT 10    '''
+        SELECT user_name, GROUP_CONCAT( ups.Service_Id ) sid
+        FROM user_profile up
+        LEFT JOIN user_profile_services ups ON up.User_Id = ups.User_Id 
+        GROUP BY user_name
+        LIMIT 10    
+    '''
     df = pd.read_sql(sql, con=conn)
     _json = df.to_json(orient='records')
     conn.close()
     return jsonify(_json)
+
+
+@app.route("/api/view/<view>")
+def get_view(view): 
+    conn = engine.connect() 
+    sql = '''
+    SELECT TABLE_NAME FROM (
+        SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS
+        WHERE TABLE_SCHEMA = 'ripe_bananas' 
+        UNION
+        SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = 'ripe_bananas' 
+    ) DB_VIEWS_AND_TABLES  
+    '''
+    df = pd.read_sql(sql, con=conn)
+    df=df.loc[df.TABLE_NAME == view]
+    if len(df) < 1:
+        return 'invalid db object'
+
+    sql = f'''  SELECT * FROM {view} '''
+    df = pd.read_sql(sql, con=conn)
+    _json = df.to_json(orient='records')
+    resp = make_response(_json)
+    resp.headers['content-type'] = 'application/json' 
+    conn.close()
+    return resp
+
+
 
 @app.route("/api/lookup")
 def mongodata():
